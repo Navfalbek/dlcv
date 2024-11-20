@@ -19,6 +19,11 @@ import itertools
 import flappy_bird_gymnasium
 import os
 
+import argparse
+from stable_baselines3 import A2C
+from stable_baselines3.common.vec_env import DummyVecEnv
+
+
 # For printing date and time
 DATE_FORMAT = "%m-%d %H:%M:%S"
 
@@ -30,7 +35,128 @@ os.makedirs(RUNS_DIR, exist_ok=True)
 matplotlib.use('Agg')
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-device = 'cpu' # force cpu, sometimes GPU not always faster than CPU due to overhead of moving data to GPU
+# device = 'cpu' # force cpu, sometimes GPU not always faster than CPU due to overhead of moving data to GPU
+
+def train_dqn():
+    print("Training with DQN...")
+    agent = DQN()
+    agent.run(is_training=True)
+
+def test_dqn(env_name="FlappyBird-v0"):
+    print("Testing with DQN...")
+
+    # Create the environment
+    import gymnasium as gym
+    env = gym.make(env_name, render_mode="human")
+
+    # Get state and action dimensions
+    state_dim = env.observation_space.shape[0]
+    action_dim = env.action_space.n
+
+    # Initialize the DQN agent
+    agent = DQN(state_dim=state_dim, action_dim=action_dim)
+
+    # Test the agent
+    obs, _ = env.reset()
+    done = False
+    while not done:
+        action = agent.select_action(obs)  # Use the trained model to select actions
+        obs, reward, done, _, _ = env.step(action)
+        env.render()
+
+    env.close()
+
+
+# def train_a2c(env_name="FlappyBird-v0", timesteps=10_000_000):
+#     print("Training with A2C...")
+#     env = DummyVecEnv([lambda: gym.make(env_name)])
+#     model = A2C("MlpPolicy", env, verbose=1, learning_rate=1e-3, gamma=0.99, tensorboard_log="./a2c_logs/")
+#     model.learn(total_timesteps=timesteps)
+#     model.save("runs/a2c_flappy_bird.zip")
+#     print("A2C model saved to runs/a2c_flappy_bird.zip")
+
+def train_a2c(env_name="FlappyBird-v0", timesteps=10_000_000):
+    print("Training with A2C...")
+
+    # Create environment
+    env = DummyVecEnv([lambda: gym.make(env_name)])
+
+    # Initialize model
+    model = A2C("MlpPolicy", env, verbose=1, learning_rate=1e-3, gamma=0.99)
+
+    # Initialize metrics storage
+    episode_rewards = []
+    losses = []
+    episodes = []
+
+    # Initialize Matplotlib for live plotting
+    plt.ion()
+    fig, ax = plt.subplots(2, 1, figsize=(10, 10))
+    ax[0].set_title("Episode Rewards")
+    ax[0].set_xlabel("Episode")
+    ax[0].set_ylabel("Reward")
+    ax[1].set_title("Policy Loss")
+    ax[1].set_xlabel("Episode")
+    ax[1].set_ylabel("Loss")
+
+    # Callback function for logging and plotting
+    def custom_callback(_locals, _globals):
+        nonlocal episodes, episode_rewards, losses
+
+        if "infos" in _locals:
+            infos = _locals["infos"]
+            for info in infos:
+                if "episode" in info.keys():
+                    # Log rewards
+                    episode_rewards.append(info["episode"]["r"])
+                    episodes.append(len(episodes) + 1)
+
+                    # Update reward plot
+                    ax[0].plot(episodes, episode_rewards, color="blue")
+                    ax[0].relim()
+                    ax[0].autoscale_view()
+
+        # Log loss (can be accessed from locals)
+        if "policy_loss" in _locals:
+            policy_loss = _locals["policy_loss"]
+            losses.append(policy_loss)
+
+            # Update loss plot
+            ax[1].plot(episodes, losses, color="red")
+            ax[1].relim()
+            ax[1].autoscale_view()
+
+        plt.draw()
+        plt.pause(0.01)
+
+        return True
+
+    # Train model with custom callback for logging
+    model.learn(total_timesteps=timesteps, callback=custom_callback)
+
+    # Save model
+    model.save("runs/a2c_flappy_bird")
+    print("A2C model saved to runs/a2c_flappy_bird.zip")
+
+    # Finalize plots
+    plt.ioff()
+    plt.show()
+
+def test_a2c(env_name="FlappyBird-v0"):
+    print("Testing with A2C...")
+    # Add render_mode="human" for rendering
+    env = DummyVecEnv([lambda: gym.make(env_name, render_mode="human")])
+    model = A2C.load("runs/a2c_flappy_bird.zip")
+    
+    obs = env.reset()
+    while True:
+        # Predict action
+        action, _ = model.predict(obs)
+        # Step the environment
+        obs, _, done, _ = env.step(action)
+        if done:
+            break
+
 
 # Deep Q-Learning Agent
 class Agent():
@@ -204,31 +330,68 @@ class Agent():
                         step_count=0
 
 
-    def save_graph(self, rewards_per_episode, epsilon_history):
-        # Save plots
-        fig = plt.figure(1)
+    # def save_graph(self, rewards_per_episode, epsilon_history):
+    #     # Save plots
+    #     fig = plt.figure(1)
+    #
+    #     # Plot average rewards (Y-axis) vs episodes (X-axis)
+    #     mean_rewards = np.zeros(len(rewards_per_episode))
+    #     for x in range(len(mean_rewards)):
+    #         mean_rewards[x] = np.mean(rewards_per_episode[max(0, x-99):(x+1)])
+    #     plt.subplot(121) # plot on a 1 row x 2 col grid, at cell 1
+    #     # plt.xlabel('Episodes')
+    #     plt.ylabel('Mean Rewards')
+    #     plt.plot(mean_rewards)
+    #
+    #     # Plot epsilon decay (Y-axis) vs episodes (X-axis)
+    #     plt.subplot(122) # plot on a 1 row x 2 col grid, at cell 2
+    #     # plt.xlabel('Time Steps')
+    #     plt.ylabel('Epsilon Decay')
+    #     plt.plot(epsilon_history)
+    #
+    #     plt.subplots_adjust(wspace=1.0, hspace=1.0)
+    #
+    #     # Save plots
+    #     fig.savefig(self.GRAPH_FILE)
+    #     plt.close(fig)
 
-        # Plot average rewards (Y-axis) vs episodes (X-axis)
+    def save_graph(self, rewards_per_episode, epsilon_history):
+        """
+        Saves two separate plots for mean rewards and epsilon decay.
+        Args:
+            rewards_per_episode (list): List of rewards per episode.
+            epsilon_history (list): List of epsilon values during training.
+        """
+        # Calculate mean rewards over a sliding window of 100 episodes
         mean_rewards = np.zeros(len(rewards_per_episode))
         for x in range(len(mean_rewards)):
-            mean_rewards[x] = np.mean(rewards_per_episode[max(0, x-99):(x+1)])
-        plt.subplot(121) # plot on a 1 row x 2 col grid, at cell 1
-        # plt.xlabel('Episodes')
-        plt.ylabel('Mean Rewards')
-        plt.plot(mean_rewards)
+            mean_rewards[x] = np.mean(rewards_per_episode[max(0, x - 99):(x + 1)])
 
-        # Plot epsilon decay (Y-axis) vs episodes (X-axis)
-        plt.subplot(122) # plot on a 1 row x 2 col grid, at cell 2
-        # plt.xlabel('Time Steps')
-        plt.ylabel('Epsilon Decay')
-        plt.plot(epsilon_history)
+        # Plot and save Mean Rewards graph
+        plt.figure(figsize=(12, 6))  # Larger figure size for clarity
+        plt.plot(mean_rewards, label="Mean Rewards")
+        plt.xlabel("Episodes")
+        plt.ylabel("Mean Rewards")
+        plt.title("Mean Rewards per Episode")
+        plt.legend()
+        plt.grid(True)
+        mean_rewards_path = "mean_rewards.png"
+        plt.savefig(mean_rewards_path)
+        plt.close()
+        print(f"Mean rewards plot saved to {mean_rewards_path}")
 
-        plt.subplots_adjust(wspace=1.0, hspace=1.0)
-
-        # Save plots
-        fig.savefig(self.GRAPH_FILE)
-        plt.close(fig)
-
+        # Plot and save Epsilon Decay graph
+        plt.figure(figsize=(12, 6))  # Larger figure size for clarity
+        plt.plot(epsilon_history, label="Epsilon Decay", color='orange')
+        plt.xlabel("Time Steps")
+        plt.ylabel("Epsilon")
+        plt.title("Epsilon Decay over Time")
+        plt.legend()
+        plt.grid(True)
+        epsilon_decay_path = "epsilon_decay.png"
+        plt.savefig(epsilon_decay_path)
+        plt.close()
+        print(f"Epsilon decay plot saved to {epsilon_decay_path}")
 
     # Optimize policy network
     def optimize(self, mini_batch, policy_dqn, target_dqn):
@@ -279,16 +442,36 @@ class Agent():
         loss.backward()             # Compute gradients
         self.optimizer.step()       # Update network parameters i.e. weights and biases
 
-if __name__ == '__main__':
-    # Parse command line inputs
-    parser = argparse.ArgumentParser(description='Train or test model.')
-    parser.add_argument('hyperparameters', help='')
-    parser.add_argument('--train', help='Training mode', action='store_true')
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Train or test RL models for Flappy Bird.")
+    parser.add_argument("--train", help="Training mode", action="store_true")
+    parser.add_argument("--algorithm", choices=["dqn", "a2c"], required=True, help="Choose the RL algorithm")
+    parser.add_argument("--hyperparameters", help="The hyperparameter set to use (e.g., 'flappybird1')", default="flappybird1")
     args = parser.parse_args()
 
-    dql = Agent(hyperparameter_set=args.hyperparameters)
+    if args.algorithm == "dqn":
+        dql = Agent(hyperparameter_set=args.hyperparameters)
+        if args.train:
+            dql.run(is_training=True, render=False)
+        else:
+            dql.run(is_training=False, render=True)
+    elif args.algorithm == "a2c":
+        if args.train:
+            train_a2c()
+        else:
+            test_a2c()
 
-    if args.train:
-        dql.run(is_training=True)
-    else:
-        dql.run(is_training=False, render=True)
+# if __name__ == '__main__':
+#     # Parse command line inputs
+#     parser = argparse.ArgumentParser(description='Train or test model.')
+#     parser.add_argument('hyperparameters', help='')
+#     parser.add_argument('--train', help='Training mode', action='store_true')
+#     args = parser.parse_args()
+
+#     dql = Agent(hyperparameter_set=args.hyperparameters)
+
+#     if args.train:
+#         dql.run(is_training=True)
+#     else:
+#         dql.run(is_training=False, render=True)

@@ -12,11 +12,9 @@ class DQN(nn.Module):
         self.fc1 = nn.Linear(state_dim, hidden_dim)
 
         if self.enable_dueling_dqn:
-            # Value stream
             self.fc_value = nn.Linear(hidden_dim, 256)
             self.value = nn.Linear(256, 1)
 
-            # Advantages stream
             self.fc_advantages = nn.Linear(hidden_dim, 256)
             self.advantages = nn.Linear(256, action_dim)
 
